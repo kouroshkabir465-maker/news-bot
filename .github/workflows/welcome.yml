@@ -1,0 +1,16 @@
+name: Welcome message
+on:
+  workflow_dispatch:
+    inputs:
+      chat: { description: "chat id", required: true }
+permissions: {}
+jobs:
+  w:
+    runs-on: ubuntu-latest
+    env: { NEWS_BOT_TOKEN: "${{ secrets.NEWS_BOT_TOKEN }}" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12', cache: pip }
+      - run: pip install -q -r requirements.txt
+      - run: python news_bot.py --welcome "${{ inputs.chat }}"

@@ -127,6 +127,8 @@ def main():
     now = time.time(); since = now - 14 * 3600
     seen = {k: v for k, v in seen.items() if now - v < 4 * 86400}
     if REPLY: since = now - 24 * 3600
+    elif now - seen.get("_last_digest", 0) < 2 * 3600 and not os.environ.get("FORCE"):
+        print("digest already sent in the last 2h (worker cron + GitHub cron backup), skip"); return
     items = [x for f in FEEDS for x in fetch(*f, since)]
     for x in items:
         x["key"] = hashlib.md5((x["link"].split("?")[0] or x["title"]).encode()).hexdigest()
@@ -162,7 +164,8 @@ def main():
         return requests.post(f"https://api.telegram.org/bot{TOKEN}/{method}", timeout=40, data=dict(
             chat_id=c, parse_mode="HTML", reply_markup=KB, **d)).json()
     ok_any = False
-    for c in (CHATS[:1] if REPLY else CHATS):
+    ask = os.environ.get("TG_CHAT", "").strip()
+    for c in (([ask] if ask in CHATS else CHATS[:1]) if REPLY else CHATS):
         j = send(c, "sendMessage", text=head, disable_web_page_preview="true")
         if not j.get("ok"): print(f"send to {c} failed: {j.get('description')}"); continue
         ok_any = True; photos = 0
@@ -174,6 +177,14 @@ def main():
     if not ok_any: sys.exit("no recipient received the message")
     if not REPLY:
         for x in pool: seen[x["key"]] = now
+        seen["_last_digest"] = now
         json.dump(seen, open(SEEN, "w"))
 
-if __name__ == "__main__": main()
+def welcome(chat):
+    j = requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", timeout=30, data=dict(chat_id=chat, reply_markup=KB,
+        text="سلام داداش 👋 این حساب هم به ربات اخبار وصل شد ✅ خلاصهٔ اخبار مهم ایران، آمریکا و ترکیه هر روز ساعت ۹، ۱۵ و ۲۱ اینجا هم میاد. برای آخرین اخبار دکمهٔ «🔍 بررسی کن» رو بزن.")).json()
+    print("welcome:", "ok" if j.get("ok") else j.get("description"))
+
+if __name__ == "__main__":
+    if "--welcome" in sys.argv: welcome(sys.argv[sys.argv.index("--welcome") + 1])
+    else: main()

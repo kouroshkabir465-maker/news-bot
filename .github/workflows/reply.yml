@@ -13,6 +13,7 @@ jobs:
       TZ: Europe/Istanbul
       NEWS_BOT_TOKEN: ${{ secrets.NEWS_BOT_TOKEN }}
       NEWS_CHAT_IDS: ${{ secrets.NEWS_CHAT_IDS }}
+      TG_CHAT: ${{ github.event.client_payload.chat }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
