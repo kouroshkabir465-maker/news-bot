@@ -1,0 +1,21 @@
+name: Reply (check now)
+on:
+  repository_dispatch:
+    types: [tg_check]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  reply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      TZ: Europe/Istanbul
+      NEWS_BOT_TOKEN: ${{ secrets.NEWS_BOT_TOKEN }}
+      NEWS_CHAT_IDS: ${{ secrets.NEWS_CHAT_IDS }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12', cache: pip }
+      - run: pip install -q -r requirements.txt
+      - run: python news_bot.py --reply

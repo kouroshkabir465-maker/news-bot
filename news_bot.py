@@ -11,6 +11,8 @@ CHATS = [c.strip() for c in os.environ.get("NEWS_CHAT_IDS", "8561650547,57280754
 SEEN = os.path.join(HERE, "seen.json")
 DRY = "--dry" in sys.argv
 UA = {"User-Agent": "Mozilla/5.0 (news-bot)"}
+KB = json.dumps({"keyboard": [[{"text": "🔍 بررسی کن"}]], "resize_keyboard": True, "is_persistent": True})
+REPLY = "--reply" in sys.argv
 FEEDS = [  # (source name, url, language)
     ("ایران اینترنشنال", "https://www.iranintl.com/feed", "fa"),
     ("Fox News", "https://moxie.foxnews.com/google-publisher/world.xml", "en"),
@@ -92,19 +94,23 @@ def main():
     seen = json.load(open(SEEN)) if os.path.exists(SEEN) else {}
     now = time.time(); since = now - 14 * 3600
     seen = {k: v for k, v in seen.items() if now - v < 4 * 86400}
+    if REPLY: since = now - 24 * 3600
     items = [x for f in FEEDS for x in fetch(*f, since)]
     for x in items:
         x["key"] = hashlib.md5((x["link"].split("?")[0] or x["title"]).encode()).hexdigest()
         x["score"] = score(x["title"] + " " + x["summary"])
     pool, titles = [], set()
-    for x in sorted(items, key=lambda x: (-x["score"], -x["ts"])):
-        if x["score"] < 5 or x["key"] in seen or norm(x["title"]) in titles: continue
+    order = (lambda x: -x["ts"]) if REPLY else (lambda x: (-x["score"], -x["ts"]))
+    for x in sorted(items, key=order):
+        if x["score"] < 5 or (x["key"] in seen and not REPLY) or norm(x["title"]) in titles: continue
         titles.add(norm(x["title"])); pool.append(x)
     pool = pool[:10]
-    if not pool: print("no new important items"); return
+    if not pool and not REPLY: print("no new important items"); return
     now_l = dt.datetime.now(TZ)
     part = "صبح" if now_l.hour < 12 else ("ظهر" if now_l.hour < 18 else "شب")
-    head = f"🗞 <b>خلاصهٔ اخبار مهم ایران و آمریکا — {part}</b>\n📅 {now_l:%Y-%m-%d %H:%M} (استانبول)\n"
+    head = (f"🔍 <b>آخرین اخبار مهم ایران و آمریکا</b> (۲۴ ساعت اخیر، جدیدترین اول)" if REPLY else
+            f"🗞 <b>خلاصهٔ اخبار مهم ایران و آمریکا — {part}</b>") + f"\n📅 {now_l:%Y-%m-%d %H:%M} (استانبول)\n"
+    if not pool: head += "\nدر ۲۴ ساعت اخیر خبر مهم تازه‌ای پیدا نشد."
     blocks = []
     for i, x in enumerate(pool, 1):
         if x["lang"] == "fa": t, s = x["title"], x["summary"]
@@ -113,7 +119,7 @@ def main():
             if s is None: s = x["summary"]
         b = f"<b>{i}. {html.escape(t)}</b>"
         if s and norm(s)[:40] != norm(t)[:40]: b += f"\n{html.escape(clean(s, 300))}"
-        b += f"\n📰 {html.escape(x['src'])} | <a href=\"{html.escape(x['link'], quote=True)}\">لینک خبر</a>"
+        b += f"\n🕒 {dt.datetime.fromtimestamp(x['ts'], TZ):%Y-%m-%d %H:%M} | 📰 {html.escape(x['src'])} | <a href=\"{html.escape(x['link'], quote=True)}\">لینک خبر</a>"
         blocks.append(b)
     msgs, cur = [], head
     for b in blocks:
@@ -124,13 +130,13 @@ def main():
     if DRY:
         print("\n----\n".join(msgs)); return
     ok_any = False
-    for c in CHATS:
+    for c in (CHATS[:1] if REPLY else CHATS):
         for m in msgs:
             j = requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", timeout=30, data=dict(
-                chat_id=c, text=m, parse_mode="HTML", disable_web_page_preview="true")).json()
+                chat_id=c, text=m, parse_mode="HTML", disable_web_page_preview="true", reply_markup=KB)).json()
             if not j.get("ok"): print(f"send to {c} failed: {j.get('description')}"); break
         else: ok_any = True; print(f"sent to {c}")
-    if ok_any:
+    if ok_any and not REPLY:
         for x in pool: seen[x["key"]] = now
         json.dump(seen, open(SEEN, "w"))
     else: sys.exit("no recipient received the digest")

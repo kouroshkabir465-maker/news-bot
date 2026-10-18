@@ -12,7 +12,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - env: { GH_TOKEN: "${{ github.token }}" }
-        run: for w in digest.yml keepalive.yml; do gh api -X PUT "repos/${{ github.repository }}/actions/workflows/$w/enable"; done
+        run: for w in digest.yml reply.yml keepalive.yml; do gh api -X PUT "repos/${{ github.repository }}/actions/workflows/$w/enable"; done
       - run: |
           age=$(( ( $(date +%s) - $(git log -1 --format=%ct) ) / 86400 ))
           if [ "$age" -ge 30 ]; then
