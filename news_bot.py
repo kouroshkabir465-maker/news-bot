@@ -76,14 +76,15 @@ def tr(text):
     try:
         r = requests.get("https://translate.googleapis.com/translate_a/single", timeout=15,
                          params=dict(client="gtx", sl="en", tl="fa", dt="t", q=text[:1500]), headers=UA)
-        if r.ok and r.text.startswith("["): return "".join(p[0] for p in r.json()[0] if p[0]).strip()
+        if r.ok and r.text.startswith("["): USED["google"] += 1; return "".join(p[0] for p in r.json()[0] if p[0]).strip()
     except Exception: pass
     try:
         j = requests.get("https://api.mymemory.translated.net/get", timeout=15, params={"q": text[:480], "langpair": "en|fa"}).json()
         t = j.get("responseData", {}).get("translatedText")
-        if j.get("responseStatus") == 200 and t and "MYMEMORY" not in t.upper(): return t
+        if j.get("responseStatus") == 200 and t and "MYMEMORY" not in t.upper(): USED["mymemory"] += 1; return t
     except Exception: pass
-    return None
+    USED["english"] += 1; return None
+USED = {"google": 0, "mymemory": 0, "english": 0}
 
 def norm(t): return re.sub(r"[^a-z0-9\u0600-\u06ff ]", "", t.lower())[:70]
 
@@ -119,6 +120,7 @@ def main():
         if len(cur) + len(b) + 2 > 3900: msgs.append(cur); cur = ""
         cur += "\n" + b + "\n"
     msgs.append(cur)
+    print("translation backends:", USED)
     if DRY:
         print("\n----\n".join(msgs)); return
     ok_any = False
