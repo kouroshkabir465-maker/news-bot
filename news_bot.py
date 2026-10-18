@@ -19,6 +19,10 @@ FEEDS = [  # (source name, url, language)
     ("Fox News", "https://moxie.foxnews.com/google-publisher/politics.xml", "en"),
     ("Bloomberg", "https://feeds.bloomberg.com/politics/news.rss", "en"),
     ("Bloomberg", "https://feeds.bloomberg.com/markets/news.rss", "en"),
+    ("Bloomberg", "https://feeds.bloomberg.com/news.rss", "en"),
+    ("Bloomberg", "https://feeds.bloomberg.com/economics/news.rss", "en"),
+    ("Fox News", "https://moxie.foxnews.com/google-publisher/latest.xml", "en"),
+    ("New York Post", "https://nypost.com/feed/", "en"),
     ("CNN", "https://www.cnn.com/sitemap/news.xml", "en"),   # CNN RSS is dead; news sitemap has titles
     ("Politico", "https://rss.politico.com/politics-news.xml", "en"),
     ("Politico", "https://rss.politico.com/defense.xml", "en"),
@@ -31,17 +35,25 @@ TOPIC = [(r"sanction|تحریم", 3), (r"nuclear|uranium|enrich|iaea|هسته|ا
          (r"\bwar\b|strike|attack|missile|drone|military|israel|جنگ|حمله|موشک|پهپاد|نظامی|اسرائیل", 2),
          (r"trump|white house|washington|state department|pentagon|congress|u\.s\.|\bus\b|united states|america|آمریکا|ترامپ|واشنگتن|کاخ سفید", 2),
          (r"oil|economy|rial|inflation|tariff|نفت|اقتصاد|ریال|تورم|دلار", 2),
-         (r"talks|negotiat|deal|diplomac|مذاکره|توافق|دیپلما", 2), (r"protest|execution|arrest|اعتراض|اعدام|بازداشت", 1)]
+         (r"talks|negotiat|deal|diplomac|مذاکر|توافق|دیپلما", 2), (r"protest|execution|arrest|اعتراض|اعدام|بازداشت", 1)]
 USONLY = [(r"trump|white house|congress|senate|supreme court|pentagon|federal reserve|\bfed\b|ترامپ|کاخ سفید|کنگره", 2),
           (r"sanction|tariff|war|missile|shutdown|election|economy|inflation|تحریم|تعرفه", 1)]
 
+PAHLAVI = r"pahlavi|پهلوی|شاهزاده رضا"
+TURKEY = r"turkey|türkiye|turkiye|turkish|erdogan|erdoğan|ankara|istanbul|\blira\b|ترکیه|اردوغان|آنکارا|استانبول|لیر"
+TR_TOPIC = [(r"erdogan|erdoğan|اردوغان", 2), (r"election|parliament|court|central bank|interest rate|\blira\b|inflation|imamoglu|İmamoğlu|pkk|kurd|syria|nato|opposition|انتخابات|مجلس|دادگاه|بانک مرکزی|نرخ بهره|لیر|تورم|امام‌اوغلو|امام اوغلو|کرد|سوریه|ناتو|مخالفان", 2)]
+TRIVIA = r"thanksgiving|recipe|roast turkey|turkey dinner|tourist|vacation|travel guide|celebrity"
 SPORT = r"فوتبال|کشتی|والیبال|باشگاه|لیگ|دروازه‌بان|هافبک|مدال|football|soccer|wrestl|world cup|olympic|\bnba\b|\bnfl\b"
 def score(text):
     t = text.lower()
     if re.search(SPORT, t): return 0
     s = lambda rules: sum(w for p, w in rules if re.search(p, t))
+    if re.search(PAHLAVI, t) and not re.search(TRIVIA, t): return 7 + s(TOPIC)   # Prince Reza Pahlavi
     ir = s(IRAN)
     if ir: return ir + s(TOPIC) if s(TOPIC) >= 2 else 0   # Iran + a politics/security/economy topic
+    if re.search(TURKEY, t) and not re.search(TRIVIA, t):
+        tr_ = s(TOPIC) + s(TR_TOPIC)
+        if tr_ >= 2: return 4 + tr_                       # Turkey politics/economy/security
     us = s(USONLY)
     return us if us >= 3 else 0   # strong US politics/economy stories without Iran
 
@@ -124,12 +136,12 @@ def main():
     for x in sorted(items, key=order):
         if x["score"] < 5 or (x["key"] in seen and not REPLY) or norm(x["title"]) in titles: continue
         titles.add(norm(x["title"])); pool.append(x)
-    pool = pool[:10]
+    pool = pool[:12]
     if not pool and not REPLY: print("no new important items"); return
     now_l = dt.datetime.now(TZ)
     part = "صبح" if now_l.hour < 12 else ("ظهر" if now_l.hour < 18 else "شب")
-    head = (f"🔍 <b>آخرین اخبار مهم ایران و آمریکا</b> (۲۴ ساعت اخیر، جدیدترین اول)" if REPLY else
-            f"🗞 <b>خلاصهٔ اخبار مهم ایران و آمریکا — {part}</b>") + f"\n📅 {now_l:%Y-%m-%d %H:%M} (استانبول)\n"
+    head = (f"🔍 <b>آخرین اخبار مهم ایران، آمریکا و ترکیه</b> (۲۴ ساعت اخیر، جدیدترین اول)" if REPLY else
+            f"🗞 <b>خلاصهٔ اخبار مهم ایران، آمریکا و ترکیه — {part}</b>") + f"\n📅 {now_l:%Y-%m-%d %H:%M} (استانبول)\n"
     if not pool: head += "\nدر ۲۴ ساعت اخیر خبر مهم تازه‌ای پیدا نشد."
     blocks, imgs = [], []
     for i, x in enumerate(pool, 1):
