@@ -25,10 +25,4 @@ jobs:
       - run: python news_bot.py
       - name: Push state
         if: always()
-        run: |
-          [ -f seen.json ] || exit 0
-          cp seen.json /tmp/seen.json
-          git config user.name news-bot; git config user.email news-bot@users.noreply.github.com
-          if git fetch -q origin state; then git checkout -q -B st origin/state; else git checkout -q --orphan st; git rm -rqf .; fi
-          cp /tmp/seen.json seen.json; git add seen.json
-          git diff --cached --quiet || { git commit -qm "state $(date -u +%FT%TZ)"; git push -q origin HEAD:state; }
+        run: tools/push_state.sh

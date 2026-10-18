@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Iran/USA news digest -> Telegram (Farsi). Sources: Iran International, Fox News, Bloomberg, CNN, Politico, NY Post.
   news_bot.py            -> build + send digest of new items, update seen.json
+  news_bot.py --alert    -> near-real-time alerts (⚡ فوری) for new important items
   news_bot.py --dry      -> print only"""
 import os, sys, re, json, time, html, hashlib, datetime as dt, calendar, requests, feedparser
 from zoneinfo import ZoneInfo
@@ -122,6 +123,63 @@ USED = {"google": 0, "mymemory": 0, "english": 0}
 
 def norm(t): return re.sub(r"[^a-z0-9\u0600-\u06ff ]", "", t.lower())[:70]
 
+def block(x, prefix="", tag=""):
+    """One news item as Telegram HTML (fits a photo caption)."""
+    if x["lang"] == "fa": t, s = x["title"], x["summary"]
+    else:
+        t = tr(x["title"]) or x["title"]; s = tr(x["summary"]) if x["summary"] else ""
+        if s is None: s = x["summary"]
+    b = f"{tag}<b>{prefix}{html.escape(t)}</b>"
+    if s and norm(s)[:40] != norm(t)[:40]: b += f"\n{html.escape(clean(s, 300))}"
+    foot = f"\n🕒 {dt.datetime.fromtimestamp(x['ts'], TZ):%Y-%m-%d %H:%M}{' (استانبول)' if tag else ''} | 📰 {html.escape(x['src'])} | <a href=\"{html.escape(x['link'], quote=True)}\">لینک خبر</a>"
+    if len(b) + len(foot) > 1000:   # caption limit 1024 (after entity parsing); trim summary
+        b = f"{tag}<b>{prefix}{html.escape(clean(t, 200))}</b>" + (f"\n{html.escape(clean(s, 1000 - len(foot) - len(tag) - len(clean(t, 200)) - 60))}" if s else "")
+    return b + foot
+
+def tg(c, method, **d):
+    return requests.post(f"https://api.telegram.org/bot{TOKEN}/{method}", timeout=40, data=dict(
+        chat_id=c, parse_mode="HTML", reply_markup=KB, **d)).json()
+
+def collect(since):
+    items = [x for f in FEEDS for x in fetch(*f, since)]
+    for x in items:
+        x["key"] = hashlib.md5((x["link"].split("?")[0] or x["title"]).encode()).hexdigest()
+        x["score"] = score(x["title"] + " " + x["summary"])
+    return items
+
+ALERT_MAX, ALERT_WINDOW = 5, 3 * 3600
+def alert():
+    """Near-real-time alerts (every ~10 min): each NEW important item from any source, at most ALERT_MAX per run.
+    Shares seen.json with the digest: alerted items are not repeated in the digest and vice versa.
+    'a:<key>' = seen by alerts only (seed/overflow) -> still eligible for the digest."""
+    seen = json.load(open(SEEN)) if os.path.exists(SEEN) else {}
+    now = time.time(); seen = {k: v for k, v in seen.items() if now - v < 4 * 86400}
+    items = [x for x in collect(now - ALERT_WINDOW) if x["score"] >= 5]
+    first = "_alert_init" not in seen
+    pool, titles = [], set()
+    for x in sorted(items, key=lambda x: (-x["score"], -x["ts"])):
+        if x["key"] in seen or "a:" + x["key"] in seen or norm(x["title"]) in titles: continue
+        titles.add(norm(x["title"])); pool.append(x)
+    if first:
+        for x in pool: seen["a:" + x["key"]] = now
+        print(f"first alert run: seeded {len(pool)} current items, nothing sent")
+        pool = []
+    send, over = pool[:ALERT_MAX], pool[ALERT_MAX:]
+    for x in over: seen["a:" + x["key"]] = now     # flood cap: overflow waits for the next digest
+    send.sort(key=lambda x: x["ts"])               # chronological
+    print(f"alert candidates: {len(pool)}, sending {len(send)}, overflow {len(over)}")
+    for x in send:
+        b = block(x, tag="⚡ <b>فوری</b>\n"); im = x.get("img") or og_img(x["link"])
+        if DRY: print(f"[img: {im or '-'}]\n{b}\n"); continue
+        ok = False
+        for c in CHATS:
+            j = tg(c, "sendPhoto", photo=im, caption=b) if im else {}
+            if not j.get("ok"): j = tg(c, "sendMessage", text=b, disable_web_page_preview="true")
+            ok |= bool(j.get("ok")); print(f"  alert -> {c}: {'ok' if j.get('ok') else j.get('description')}")
+        if ok: seen[x["key"]] = now
+    seen["_alert_init"] = now
+    if not DRY: json.dump(seen, open(SEEN, "w"))
+
 def main():
     seen = json.load(open(SEEN)) if os.path.exists(SEEN) else {}
     now = time.time(); since = now - 14 * 3600
@@ -129,10 +187,7 @@ def main():
     if REPLY: since = now - 24 * 3600
     elif now - seen.get("_last_digest", 0) < 2 * 3600 and not os.environ.get("FORCE"):
         print("digest already sent in the last 2h (worker cron + GitHub cron backup), skip"); return
-    items = [x for f in FEEDS for x in fetch(*f, since)]
-    for x in items:
-        x["key"] = hashlib.md5((x["link"].split("?")[0] or x["title"]).encode()).hexdigest()
-        x["score"] = score(x["title"] + " " + x["summary"])
+    items = collect(since)
     pool, titles = [], set()
     order = (lambda x: -x["ts"]) if REPLY else (lambda x: (-x["score"], -x["ts"]))
     for x in sorted(items, key=order):
@@ -147,22 +202,10 @@ def main():
     if not pool: head += "\nدر ۲۴ ساعت اخیر خبر مهم تازه‌ای پیدا نشد."
     blocks, imgs = [], []
     for i, x in enumerate(pool, 1):
-        if x["lang"] == "fa": t, s = x["title"], x["summary"]
-        else:
-            t = tr(x["title"]) or x["title"]; s = tr(x["summary"]) if x["summary"] else ""
-            if s is None: s = x["summary"]
-        b = f"<b>{i}. {html.escape(t)}</b>"
-        if s and norm(s)[:40] != norm(t)[:40]: b += f"\n{html.escape(clean(s, 300))}"
-        foot = f"\n🕒 {dt.datetime.fromtimestamp(x['ts'], TZ):%Y-%m-%d %H:%M} | 📰 {html.escape(x['src'])} | <a href=\"{html.escape(x['link'], quote=True)}\">لینک خبر</a>"
-        if len(b) + len(foot) > 1000:   # caption limit 1024 (after entity parsing); trim summary
-            b = f"<b>{i}. {html.escape(clean(t, 200))}</b>" + (f"\n{html.escape(clean(s, 1000 - len(foot) - len(clean(t, 200)) - 60))}" if s else "")
-        b += foot
-        blocks.append(b); imgs.append(x.get("img") or og_img(x["link"]))
+        blocks.append(block(x, f"{i}. ")); imgs.append(x.get("img") or og_img(x["link"]))
     if DRY:
         print(head); [print(f"[img: {im or '-'}]\n{b}\n") for b, im in zip(blocks, imgs)]; return
-    def send(c, method, **d):
-        return requests.post(f"https://api.telegram.org/bot{TOKEN}/{method}", timeout=40, data=dict(
-            chat_id=c, parse_mode="HTML", reply_markup=KB, **d)).json()
+    send = tg
     ok_any = False
     ask = os.environ.get("TG_CHAT", "").strip()
     for c in (([ask] if ask in CHATS else CHATS[:1]) if REPLY else CHATS):
@@ -187,4 +230,5 @@ def welcome(chat):
 
 if __name__ == "__main__":
     if "--welcome" in sys.argv: welcome(sys.argv[sys.argv.index("--welcome") + 1])
+    elif "--alert" in sys.argv: alert()
     else: main()

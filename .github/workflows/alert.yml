@@ -1,0 +1,29 @@
+name: News alert (realtime)
+# Triggered every 10 min by the news-bot-webhook Cloudflare cron; GitHub schedule below is only a backup.
+on:
+  schedule:
+    - cron: '17,47 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency: { group: news-alert, cancel-in-progress: false }
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    env:
+      TZ: Europe/Istanbul
+      NEWS_BOT_TOKEN: ${{ secrets.NEWS_BOT_TOKEN }}
+      NEWS_CHAT_IDS: ${{ secrets.NEWS_CHAT_IDS }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12', cache: pip }
+      - run: pip install -q -r requirements.txt
+      - name: Pull state
+        run: git fetch -q origin state && git show origin/state:seen.json > seen.json || true
+      - run: python news_bot.py --alert
+      - name: Push state
+        if: always()
+        run: tools/push_state.sh

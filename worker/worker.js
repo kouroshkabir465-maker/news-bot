@@ -6,12 +6,17 @@ const KB = { keyboard: [[{ text: "🔍 بررسی کن" }]], resize_keyboard: tr
 const isCheck = t => /^\/check\b|بررسی|^🔍/.test(t.trim());
 
 export default {
-  // Cron Trigger 06/12/18 UTC = 09/15/21 Istanbul: on-time digest (GitHub cron stays as backup; bot skips if sent <2h ago)
+  // Cron Trigger "*/10 * * * *" (one trigger, replaces the old 06/12/18 one):
+  //  06:00/12:00/18:00 UTC = 09/15/21 Istanbul -> digest.yml (GitHub cron stays as backup; bot skips if sent <2h ago)
+  //  every other 10-min tick -> alert.yml (⚡ فوری realtime alerts; shares dedupe state with the digest)
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(fetch(`https://api.github.com/repos/${REPO}/actions/workflows/digest.yml/dispatches`, {
+    const t = new Date(event.scheduledTime);
+    const digest = [6, 12, 18].includes(t.getUTCHours()) && t.getUTCMinutes() < 5;
+    const wf = digest ? "digest.yml" : "alert.yml";
+    ctx.waitUntil(fetch(`https://api.github.com/repos/${REPO}/actions/workflows/${wf}/dispatches`, {
       method: "POST", body: JSON.stringify({ ref: "main" }),
       headers: { authorization: `Bearer ${env.GITHUB_TOKEN}`, accept: "application/vnd.github+json", "user-agent": "news-bot-worker", "content-type": "application/json" },
-    }));
+    }).then(r => console.log(wf, r.status)));
   },
   async fetch(req, env, ctx) {
     if (req.method !== "POST") return new Response("ok");
@@ -26,7 +31,7 @@ export default {
       { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     if (!isCheck(text)) {
       ctx.waitUntil(tg("sendMessage", { chat_id: chat, reply_markup: KB,
-        text: "سلام داداش 👋 برای دیدن آخرین اخبار مهم ایران و آمریکا دکمهٔ «🔍 بررسی کن» رو بزن. خلاصهٔ خودکار هم هر روز ساعت ۹، ۱۵ و ۲۱ میاد." }));
+        text: "سلام داداش 👋 برای دیدن آخرین اخبار مهم ایران و آمریکا دکمهٔ «🔍 بررسی کن» رو بزن. خلاصهٔ خودکار هر روز ساعت ۹، ۱۵ و ۲۱ میاد و خبرهای مهم تازه هم فوری (⚡) می‌رسه." }));
       return new Response("ok");
     }
     const ack = tg("sendMessage", { chat_id: chat, text: "در حال بررسی… ⏳", reply_markup: KB,
