@@ -57,20 +57,40 @@ def fetch(name, url, lang, since):
         print(f"FEED FAIL {name} {url}: {e}"); return []
     out = []
     if "sitemap" in url:   # CNN news sitemap
-        for loc, date, title in re.findall(r"<loc>(.*?)</loc>.*?<news:publication_date>(.*?)</news:publication_date>.*?<news:title>(.*?)</news:title>", r.text, re.S):
+        for blk in re.findall(r"<url>(.*?)</url>", r.text, re.S):
+            m = re.search(r"<loc>(.*?)</loc>.*?<news:publication_date>(.*?)</news:publication_date>.*?<news:title>(.*?)</news:title>", blk, re.S)
+            if not m: continue
+            loc, date, title = m.groups(); im = re.search(r"<image:loc>(.*?)</image:loc>", blk)
             try: ts = dt.datetime.fromisoformat(date.replace("Z", "+00:00")).timestamp()
             except Exception: continue
             if "/video/" in loc: continue
-            out.append(dict(src=name, lang=lang, title=clean(title), summary="", link=loc.strip(), ts=ts))
+            out.append(dict(src=name, lang=lang, title=clean(title), summary="", link=loc.strip(), ts=ts, img=html.unescape(im.group(1)) if im else ""))
     else:
         for e in feedparser.parse(r.content).entries:
             p = e.get("published_parsed") or e.get("updated_parsed")
             ts = calendar.timegm(p) if p else time.time()
             out.append(dict(src=name, lang=lang, title=clean(e.get("title")), summary=clean(e.get("summary"), 260),
-                            link=e.get("link", ""), ts=ts))
+                            link=e.get("link", ""), ts=ts, img=rss_img(e)))
     out = [x for x in out if x["ts"] >= since and x["title"]]
     print(f"feed ok {name:20s} {len(out):3d} recent  {url}")
     return out
+
+from urllib.parse import unquote
+def rss_img(e):
+    for k in ("media_content", "media_thumbnail"):
+        for m in e.get(k) or []:
+            if m.get("url"): return unquote(m["url"]) if "%2F" in m["url"] else m["url"]
+    for l in e.get("links", []):
+        if l.get("rel") == "enclosure" and str(l.get("type", "image")).startswith("image"): return unquote(l["href"]) if "%2F" in l["href"] else l["href"]
+    return ""
+
+def og_img(url):
+    try:
+        t = requests.get(url, headers=UA, timeout=12).text[:300000]
+        m = re.search(r'<meta[^>]+(?:property|name)=["\']og:image["\'][^>]+content=["\']([^"\']+)', t) or \
+            re.search(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:property|name)=["\']og:image', t)
+        return html.unescape(m.group(1)) if m else ""
+    except Exception: return ""
 
 def tr(text):
     """Free translation en->fa: Google gtx endpoint, then MyMemory; fallback None (keep English)."""
@@ -111,7 +131,7 @@ def main():
     head = (f"🔍 <b>آخرین اخبار مهم ایران و آمریکا</b> (۲۴ ساعت اخیر، جدیدترین اول)" if REPLY else
             f"🗞 <b>خلاصهٔ اخبار مهم ایران و آمریکا — {part}</b>") + f"\n📅 {now_l:%Y-%m-%d %H:%M} (استانبول)\n"
     if not pool: head += "\nدر ۲۴ ساعت اخیر خبر مهم تازه‌ای پیدا نشد."
-    blocks = []
+    blocks, imgs = [], []
     for i, x in enumerate(pool, 1):
         if x["lang"] == "fa": t, s = x["title"], x["summary"]
         else:
@@ -119,23 +139,26 @@ def main():
             if s is None: s = x["summary"]
         b = f"<b>{i}. {html.escape(t)}</b>"
         if s and norm(s)[:40] != norm(t)[:40]: b += f"\n{html.escape(clean(s, 300))}"
-        b += f"\n🕒 {dt.datetime.fromtimestamp(x['ts'], TZ):%Y-%m-%d %H:%M} | 📰 {html.escape(x['src'])} | <a href=\"{html.escape(x['link'], quote=True)}\">لینک خبر</a>"
-        blocks.append(b)
-    msgs, cur = [], head
-    for b in blocks:
-        if len(cur) + len(b) + 2 > 3900: msgs.append(cur); cur = ""
-        cur += "\n" + b + "\n"
-    msgs.append(cur)
-    print("translation backends:", USED)
+        foot = f"\n🕒 {dt.datetime.fromtimestamp(x['ts'], TZ):%Y-%m-%d %H:%M} | 📰 {html.escape(x['src'])} | <a href=\"{html.escape(x['link'], quote=True)}\">لینک خبر</a>"
+        if len(b) + len(foot) > 1000:   # caption limit 1024 (after entity parsing); trim summary
+            b = f"<b>{i}. {html.escape(clean(t, 200))}</b>" + (f"\n{html.escape(clean(s, 1000 - len(foot) - len(clean(t, 200)) - 60))}" if s else "")
+        b += foot
+        blocks.append(b); imgs.append(x.get("img") or og_img(x["link"]))
     if DRY:
-        print("\n----\n".join(msgs)); return
+        print(head); [print(f"[img: {im or '-'}]\n{b}\n") for b, im in zip(blocks, imgs)]; return
+    def send(c, method, **d):
+        return requests.post(f"https://api.telegram.org/bot{TOKEN}/{method}", timeout=40, data=dict(
+            chat_id=c, parse_mode="HTML", reply_markup=KB, **d)).json()
     ok_any = False
     for c in (CHATS[:1] if REPLY else CHATS):
-        for m in msgs:
-            j = requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", timeout=30, data=dict(
-                chat_id=c, text=m, parse_mode="HTML", disable_web_page_preview="true", reply_markup=KB)).json()
-            if not j.get("ok"): print(f"send to {c} failed: {j.get('description')}"); break
-        else: ok_any = True; print(f"sent to {c}")
+        j = send(c, "sendMessage", text=head, disable_web_page_preview="true")
+        if not j.get("ok"): print(f"send to {c} failed: {j.get('description')}"); continue
+        ok_any = True; photos = 0
+        for b, im in zip(blocks, imgs):
+            if im and send(c, "sendPhoto", photo=im, caption=b).get("ok"): photos += 1; continue
+            j = send(c, "sendMessage", text=b, disable_web_page_preview="true")
+            if not j.get("ok"): print(f"item send failed: {j.get('description')}")
+        print(f"sent to {c}: {len(blocks)} items, {photos} with photo")
     if not ok_any: sys.exit("no recipient received the message")
     if not REPLY:
         for x in pool: seen[x["key"]] = now
