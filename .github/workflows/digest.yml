@@ -1,0 +1,34 @@
+name: News digest
+on:
+  schedule:
+    - cron: '0 6,12,18 * * *'   # 09:00, 15:00, 21:00 Istanbul
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency: { group: news-digest, cancel-in-progress: false }
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TZ: Europe/Istanbul
+      NEWS_BOT_TOKEN: ${{ secrets.NEWS_BOT_TOKEN }}
+      NEWS_CHAT_IDS: ${{ secrets.NEWS_CHAT_IDS }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12', cache: pip }
+      - run: pip install -q -r requirements.txt
+      - name: Pull state
+        run: git fetch -q origin state && git show origin/state:seen.json > seen.json || true
+      - run: python news_bot.py
+      - name: Push state
+        if: always()
+        run: |
+          [ -f seen.json ] || exit 0
+          cp seen.json /tmp/seen.json
+          git config user.name news-bot; git config user.email news-bot@users.noreply.github.com
+          if git fetch -q origin state; then git checkout -q -B st origin/state; else git checkout -q --orphan st; git rm -rqf .; fi
+          cp /tmp/seen.json seen.json; git add seen.json
+          git diff --cached --quiet || { git commit -qm "state $(date -u +%FT%TZ)"; git push -q origin HEAD:state; }
