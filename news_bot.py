@@ -136,9 +136,9 @@ def main():
                 chat_id=c, text=m, parse_mode="HTML", disable_web_page_preview="true", reply_markup=KB)).json()
             if not j.get("ok"): print(f"send to {c} failed: {j.get('description')}"); break
         else: ok_any = True; print(f"sent to {c}")
-    if ok_any and not REPLY:
+    if not ok_any: sys.exit("no recipient received the message")
+    if not REPLY:
         for x in pool: seen[x["key"]] = now
         json.dump(seen, open(SEEN, "w"))
-    else: sys.exit("no recipient received the digest")
 
 if __name__ == "__main__": main()
